@@ -1,0 +1,182 @@
+1. Phase 1: System Design — Define the problem, architecture, technology stack, and requirements.
+2. Phase 2: Software Prototype — Develop Python code, database, and basic asset tracking logic.
+3. Phase 3: IoT Communication — Connect ESP32 using Wi-Fi and MQTT.
+4. Phase 4: Tracking Integration — Integrate RFID or BLE tracking technology.
+5. Phase 5: Security & Anomaly Detection — Detect misplaced assets, missing items, and unauthorized exits.
+6. Phase 6: Dashboard & Testing — Build the dashboard, generate alerts, and test the complete system.
+
+## Phase 1: System Design
+
+- Problem: Detect misplaced, missing, or unauthorized removal of assets.
+- Solution: Develop an IoT-based asset tracking and security system.
+- Technology Stack: ESP32, RFID/BLE, Wi-Fi, MQTT, Python, SQLite, and Streamlit.
+- System Architecture: Tracking Device → ESP32 → MQTT → Python Backend → Database → Dashboard.
+- Expected Output: Asset location, status, and unauthorized exit alerts.
+- Deliverable: System architecture, requirements, database design, and project folder structure.
+
+
+
+# Phase 1: System Design
+
+Project: IoT-Based Smart Asset Tracking and Unauthorized Movement Detection System
+
+This is the detailed Phase 1 document you can share with your project partner so both of you understand what we are building before starting the code.
+
+## 1. Problem Statement
+
+In warehouses, storage rooms, and malls, assets may be misplaced, moved to the wrong location, or removed without authorization. Manual checking makes it difficult to identify these problems quickly.
+
+Our project aims to develop an IoT-based system that tracks assets, checks their expected and detected locations, and identifies suspicious movement or unauthorized exits at the main gate.
+
+## 2. Proposed Solution
+
+Each asset will have a unique ID associated with a tracking tag. Tracking devices installed in different zones will detect assets and send their information to a backend system.
+
+The backend will compare the detected location with the expected location and check whether the asset is authorized to leave.
+
+The system will display asset statuses and generate alerts when suspicious activity is detected.
+
+## 3. Objectives
+
+- Track assets across predefined zones.
+- Detect misplaced assets.
+- Identify assets that have not been detected within the defined checking period.
+- Verify authorization when an asset reaches the main gate.
+- Generate alerts for unauthorized exits.
+- Display asset information and event history on a dashboard.
+
+## 4. System Architecture
+
+Asset Tracking Tag
+
+RFID or BLE
+
+ESP32
+
+Reads or detects tag information
+
+Wi-Fi + MQTT
+
+Transfers tracking events
+
+Python Backend
+
+Processes locations and authorization
+
+SQLite
+
+Stores data
+
+Streamlit
+
+Shows results
+
+Note: RFID is suitable for checkpoint detection; BLE can support zone-level proximity tracking. We will finalize one technology before implementing the tracking code.
+
+## 5. Functional Requirements
+
+| Requirement             | Description                                      |
+| ----------------------- | ------------------------------------------------ |
+| Asset registration      | Store each asset's ID and name                   |
+| Location monitoring     | Compare expected and detected zones              |
+| Misplacement detection  | Flag an asset detected in the wrong zone         |
+| Missing-asset detection | Flag an asset not detected within a defined time |
+| Exit verification       | Check authorization at the main gate             |
+| Alert generation        | Notify users about suspicious events             |
+| Event history           | Store timestamps, locations, and statuses        |
+| Dashboard               | Display assets, alerts, and current status       |
+
+## 6. Example of Expected Output
+
+| Asset ID | Expected Zone | Detected Location | Status            |
+| -------- | ------------- | ----------------- | ----------------- |
+| A001     | SHELF_01      | SHELF_01          | NORMAL            |
+| A002     | SHELF_01      | SHELF_03          | MISPLACED         |
+| A003     | SHELF_02      | Not detected      | MISSING           |
+| A004     | SHELF_02      | MAIN_GATE         | AUTHORIZED EXIT   |
+| A005     | SHELF_03      | MAIN_GATE         | UNAUTHORIZED EXIT |
+
+These are example results for testing. A real deployment will depend on actual tag readings, reader placement, and the missing-item timeout.
+
+Important: A missing asset is not automatically classified as stolen. An unauthorized exit is identified when the asset is detected at the gate without valid authorization.
+
+## 7. Database Design
+
+We will use SQLite with three main tables.
+
+`assets`
+
+Stores asset details:
+
+- `asset_id`
+- `asset_name`
+- `expected_zone`
+
+`events`
+
+Stores tracking history:
+
+- `event_id`
+- `asset_id`
+- `event_type`
+- `location`
+- `timestamp`
+- `status`
+
+`authorization`
+
+Stores exit permission:
+
+- `asset_id`
+- `authorized_exit`
+
+## 8. Technology Stack
+
+| Component     | Technology   | Purpose                       |
+| ------------- | ------------ | ----------------------------- |
+| Controller    | ESP32        | Collect tracking data         |
+| Tracking      | RFID or BLE  | Identify/detect tagged assets |
+| Communication | Wi-Fi + MQTT | Transfer events               |
+| Backend       | Python       | Process tracking information  |
+| Database      | SQLite       | Store assets and events       |
+| Dashboard     | Streamlit    | Display results and alerts    |
+| Development   | VS Code      | Write and run code            |
+
+## 9. Project Folder Structure
+
+We will keep all code in one project folder.
+
+```
+Asset_Tracking_System/
+├── main.py
+├── config.py
+├── database.py
+├── tracking.py
+├── anomaly_engine.py
+├── mqtt_handler.py
+├── dashboard.py
+├── setup_database.py
+├── requirements.txt
+├── README.md
+└── asset_tracking.db
+```
+
+The database file will be generated automatically when the database is initialized. We will create each Python file during the appropriate implementation phase.
+
+## 10. Phase 1 Deliverables
+
+By the end of Phase 1, both partners should agree on:
+
+1. The problem statement and proposed solution.
+2. The system architecture.
+3. The required features and asset statuses.
+4. The database structure.
+5. The technology stack and tracking method.
+6. The project folder structure.
+7. The expected final dashboard and alert output.
+
+Outcome of Phase 1: A finalized system design that guides the implementation in the remaining five phases. No hardware integration is required yet.
+
+
+lets move to phase 2 of software prtotype and what we need to do
+explaon first

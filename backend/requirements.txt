@@ -1,0 +1,9 @@
+# ==========================================
+# BACKEND DEPENDENCIES
+# IoT-Based Smart Asset Tracking System
+# ==========================================
+
+Flask>=3.0.0
+Flask-Cors>=4.0.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
