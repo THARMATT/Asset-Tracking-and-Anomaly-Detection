@@ -179,6 +179,13 @@ body {
   color: #f87171;
 }
 
+.last-updated-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: 0.25rem 0.5rem;
+}
+
 /* Error Banner */
 .error-banner {
   display: flex;

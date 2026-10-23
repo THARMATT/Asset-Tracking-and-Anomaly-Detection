@@ -69,3 +69,19 @@ EVENT_TYPE_INTERNAL = "INTERNAL_SCAN"
 EVENT_TYPE_GATE = "GATE_SCAN"
 EVENT_TYPE_AUDIT = "AUDIT_SCAN"
 EVENT_TYPE_MANUAL = "MANUAL_SIMULATION"
+ALLOWED_EVENT_TYPES = {
+    EVENT_TYPE_INTERNAL,
+    EVENT_TYPE_GATE,
+    EVENT_TYPE_AUDIT,
+    EVENT_TYPE_MANUAL
+}
+
+# MQTT Broker Configuration (Local Mosquitto Default)
+MQTT_BROKER_HOST = os.environ.get("MQTT_BROKER_HOST", "127.0.0.1")
+MQTT_BROKER_PORT = int(os.environ.get("MQTT_BROKER_PORT", 1883))
+MQTT_TOPIC = os.environ.get("MQTT_TOPIC", "asset/events")
+MQTT_CLIENT_ID = os.environ.get("MQTT_CLIENT_ID", "asset_tracking_subscriber")
+MQTT_USERNAME = os.environ.get("MQTT_USERNAME") or None
+MQTT_PASSWORD = os.environ.get("MQTT_PASSWORD") or None
+MQTT_KEEPALIVE = int(os.environ.get("MQTT_KEEPALIVE", 60))
+MQTT_QUEUE_MAXSIZE = int(os.environ.get("MQTT_QUEUE_MAXSIZE", 1000))

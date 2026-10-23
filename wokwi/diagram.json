@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "author": "Antigravity IoT Team",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn1",
+      "top": -80,
+      "left": -60,
+      "attrs": { "color": "green", "label": "Shelf Scan (A001)" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn2",
+      "top": -80,
+      "left": 40,
+      "attrs": { "color": "red", "label": "Gate Scan (A005)" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_green",
+      "top": 140,
+      "left": -60,
+      "attrs": { "color": "green", "label": "Normal/Authorized" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_red",
+      "top": 140,
+      "left": 40,
+      "attrs": { "color": "red", "label": "Anomaly/Alert" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 180,
+      "left": -60,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 180,
+      "left": 40,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serial:RX", "", [] ],
+    [ "esp:RX", "$serial:TX", "", [] ],
+    [ "esp:GND.1", "btn1:2.l", "black", [ "h0" ] ],
+    [ "esp:18", "btn1:1.l", "green", [ "h0" ] ],
+    [ "esp:GND.1", "btn2:2.l", "black", [ "h0" ] ],
+    [ "esp:19", "btn2:1.l", "red", [ "h0" ] ],
+    [ "esp:22", "led_green:A", "green", [ "h0" ] ],
+    [ "led_green:C", "r1:1", "black", [ "h0" ] ],
+    [ "r1:2", "esp:GND.2", "black", [ "h0" ] ],
+    [ "esp:23", "led_red:A", "red", [ "h0" ] ],
+    [ "led_red:C", "r2:1", "black", [ "h0" ] ],
+    [ "r2:2", "esp:GND.2", "black", [ "h0" ] ]
+  ],
+  "dependencies": {}
+}

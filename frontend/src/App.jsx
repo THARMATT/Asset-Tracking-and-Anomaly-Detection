@@ -49,6 +49,8 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState(null);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(10000); // 10s default
   const [lastUpdated, setLastUpdated] = useState(null);
+  // Guard: prevent concurrent overlapping API requests
+  const isFetchingRef = React.useRef(false);
 
   // Events Table Filters
   const [eventFilters, setEventFilters] = useState({
@@ -61,6 +63,10 @@ export default function App() {
 
   // Master Data Fetcher
   const loadDashboardData = useCallback(async (isManualRefresh = false) => {
+    // Prevent overlapping requests: if already fetching, skip this tick
+    if (isFetchingRef.current && !isManualRefresh) return;
+    isFetchingRef.current = true;
+
     if (isManualRefresh) setIsRefreshing(true);
     setErrorMessage(null);
 
@@ -116,6 +122,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      isFetchingRef.current = false;
     }
   }, [eventFilters]);
 

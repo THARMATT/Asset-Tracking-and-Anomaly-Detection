@@ -1,0 +1,6 @@
+// =========================================================================
+// WOKWI ESP32 LIBRARIES MANIFEST
+// =========================================================================
+// Wokwi automatically detects and downloads these libraries when compiling
+PubSubClient@2.8
+ArduinoJson@7.0.4

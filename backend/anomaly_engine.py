@@ -24,6 +24,7 @@ from database import (
     get_asset,
     get_assets,
     check_exit_authorization,
+    get_exit_authorization_reason,
     get_recognized_zones,
     save_event,
     save_audit_record,
@@ -183,7 +184,7 @@ def evaluate_scan_event(
                 "asset_id": asset_id,
                 "detected_zone": MAIN_GATE,
                 "expected_zone": expected_zone,
-                "message": f"SECURITY ALERT: Asset '{asset_id}' ({asset_name}) detected at {MAIN_GATE} WITHOUT exit authorization.",
+                "message": f"SECURITY ALERT: Asset '{asset_id}' ({asset_name}) detected at {MAIN_GATE} WITHOUT exit authorization ({get_exit_authorization_reason(asset_id, db_path=db_path)}).",
                 "event_metadata": {
                     "event_type": event_type,
                     "message_id": message_id,

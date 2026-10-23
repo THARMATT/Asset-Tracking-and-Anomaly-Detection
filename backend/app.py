@@ -3,6 +3,7 @@
 # IoT-Based Smart Asset Tracking System
 # ==========================================
 
+import os
 import logging
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -24,6 +25,9 @@ from database import (
     update_asset,
     check_exit_authorization,
     set_exit_authorization,
+    get_authorization,
+    get_all_authorizations,
+    get_exit_authorization_reason,
     get_events,
     retrieve_summary_counts,
     get_all_zones,
@@ -33,6 +37,7 @@ from anomaly_engine import (
     process_and_save_scan_event,
     run_and_save_inventory_audit
 )
+from mqtt_service import MQTTSubscriber
 
 # Configure readable logging
 logging.basicConfig(
@@ -63,6 +68,29 @@ def create_app(test_config=None) -> Flask:
     with app.app_context():
         initialize_database(db_path=target_db, seed=True)
 
+    # Initialize MQTT subscriber service if enabled
+    enable_mqtt = False
+    if test_config is not None:
+        enable_mqtt = test_config.get("ENABLE_MQTT", False)
+    else:
+        mqtt_env_flag = os.environ.get("ENABLE_MQTT", "true").lower() in ("true", "1", "yes")
+        # In development mode, only connect from the reloader worker to prevent duplicate clients
+        is_reloader_worker = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+        if mqtt_env_flag and (not app.debug or is_reloader_worker):
+            enable_mqtt = True
+
+    mqtt_sub = None
+    if enable_mqtt:
+        try:
+            logger.info("Initializing integrated MQTT subscriber worker...")
+            mqtt_sub = MQTTSubscriber(db_path=target_db)
+            mqtt_sub.start()
+        except Exception as exc:
+            logger.error(f"Failed to start integrated MQTT subscriber: {exc}")
+            mqtt_sub = None
+
+    app.extensions["mqtt_subscriber"] = mqtt_sub
+
     def get_db():
         """Retrieve the configured database path safely for current request context."""
         return app.config.get("DATABASE_PATH", DATABASE_PATH)
@@ -82,10 +110,16 @@ def create_app(test_config=None) -> Flask:
                 cursor.execute("SELECT 1;")
                 cursor.fetchone()
 
+            sub = app.extensions.get("mqtt_subscriber")
+            mqtt_status = "disabled"
+            if sub:
+                mqtt_status = "connected" if sub.is_connected else "disconnected"
+
             return jsonify({
                 "status": "healthy",
                 "service": "IoT Asset Tracking Backend",
                 "database_status": "connected",
+                "mqtt_status": mqtt_status,
                 "timestamp": get_utc_now()
             }), 200
 
@@ -97,6 +131,30 @@ def create_app(test_config=None) -> Flask:
                 "database_status": "disconnected",
                 "timestamp": get_utc_now()
             }), 503
+
+    @app.route("/api/mqtt/status", methods=["GET"])
+    def get_mqtt_diagnostics():
+        """Retrieve live MQTT subscriber health, connection state, and operational metrics."""
+        sub = app.extensions.get("mqtt_subscriber")
+        if not sub:
+            return jsonify({
+                "success": True,
+                "enabled": False,
+                "status": "disabled",
+                "message": "MQTT subscriber is not active on this instance"
+            }), 200
+
+        return jsonify({
+            "success": True,
+            "enabled": True,
+            "connected": sub.is_connected,
+            "status": "connected" if sub.is_connected else "disconnected",
+            "host": sub.host,
+            "port": sub.port,
+            "topic": sub.topic,
+            "queue_size": sub.event_queue.qsize(),
+            "metrics": sub.metrics
+        }), 200
 
     # ==========================================
     # 2. DASHBOARD SUMMARY
@@ -331,15 +389,33 @@ def create_app(test_config=None) -> Flask:
             "data": zones
         }), 200
 
+    @app.route("/api/authorization", methods=["GET"])
+    def list_authorizations():
+        """List all authorization records with asset details."""
+        records = get_all_authorizations(db_path=get_db())
+        return jsonify({
+            "success": True,
+            "count": len(records),
+            "data": records
+        }), 200
+
     @app.route("/api/authorization/<asset_id>", methods=["GET"])
     def get_authorization_status(asset_id: str):
-        """Check exit authorization for an asset."""
+        """Check exit authorization for an asset, returning the full record."""
         clean_id = str(asset_id).strip()
-        is_auth = check_exit_authorization(clean_id, db_path=get_db())
+        record = get_authorization(clean_id, db_path=get_db())
+        if record is None:
+            return jsonify({
+                "success": True,
+                "asset_id": clean_id,
+                "authorized_exit": False,
+                "record": None
+            }), 200
         return jsonify({
             "success": True,
             "asset_id": clean_id,
-            "authorized_exit": is_auth
+            "authorized_exit": bool(check_exit_authorization(clean_id, db_path=get_db())),
+            "record": record
         }), 200
 
     @app.route("/api/authorization/<asset_id>", methods=["PUT"])
@@ -353,11 +429,28 @@ def create_app(test_config=None) -> Flask:
                 "error": "'authorized_exit' field (0 or 1) is required"
             }), 400
 
+        # Validate ISO 8601 date fields if provided
+        for date_field in ("valid_until", "revoked_at"):
+            val = payload.get(date_field)
+            if val is not None:
+                try:
+                    from datetime import datetime as _dt
+                    _dt.fromisoformat(str(val).replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    return jsonify({
+                        "success": False,
+                        "error": f"'{date_field}' must be a valid ISO 8601 timestamp"
+                    }), 400
+
         success = set_exit_authorization(
             asset_id=clean_id,
             authorized_exit=int(payload["authorized_exit"]),
             notes=payload.get("notes"),
             valid_until=payload.get("valid_until"),
+            requested_by=payload.get("requested_by"),
+            approved_by=payload.get("approved_by"),
+            revoked_at=payload.get("revoked_at"),
+            revocation_reason=payload.get("revocation_reason"),
             db_path=get_db()
         )
         if not success:
@@ -366,10 +459,13 @@ def create_app(test_config=None) -> Flask:
                 "error": f"Asset '{clean_id}' does not exist"
             }), 404
 
+        updated_record = get_authorization(clean_id, db_path=get_db())
         return jsonify({
             "success": True,
             "message": f"Exit authorization for '{clean_id}' updated",
-            "authorized_exit": bool(payload["authorized_exit"])
+            "security_notice": "PROTOTYPE: Authorization changes take effect immediately at gate.",
+            "authorized_exit": bool(payload["authorized_exit"]),
+            "record": updated_record
         }), 200
 
     # ==========================================

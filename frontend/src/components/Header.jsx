@@ -3,7 +3,7 @@
 // ==========================================
 
 import React from 'react';
-import { RefreshCw, Radio, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Radio, CheckCircle2, AlertTriangle, Wifi, WifiOff } from 'lucide-react';
 
 export default function Header({
   health,
@@ -14,6 +14,10 @@ export default function Header({
   lastUpdated,
 }) {
   const isConnected = health && health.status === 'healthy';
+  // MQTT status is derived from /api/health response, not inferred from API availability.
+  // "connected" only when the MQTT subscriber reports an active broker connection.
+  const mqttStatus = health?.mqtt_status || 'unknown';
+  const mqttConnected = mqttStatus === 'connected';
 
   return (
     <header className="app-header">
@@ -60,6 +64,35 @@ export default function Header({
             </>
           )}
         </div>
+
+        {/* MQTT Broker Status — sourced from /api/health, not inferred */}
+        {health && (
+          <div
+            className={`connection-badge ${mqttConnected ? 'connected' : 'disconnected'}`}
+            role="status"
+            aria-label={`MQTT broker: ${mqttStatus}`}
+            title={`MQTT subscriber reports broker as: ${mqttStatus}`}
+          >
+            {mqttConnected ? (
+              <>
+                <Wifi className="icon-sm" aria-hidden="true" />
+                <span>MQTT Live</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="icon-sm" aria-hidden="true" />
+                <span>MQTT {mqttStatus === 'unknown' ? 'Unknown' : 'Offline'}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Last updated timestamp */}
+        {lastUpdated && (
+          <span className="last-updated-text" aria-live="polite">
+            Updated {lastUpdated.toLocaleTimeString()}
+          </span>
+        )}
 
         {/* Auto Refresh Select */}
         <div className="auto-refresh-select">

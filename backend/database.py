@@ -117,11 +117,28 @@ def initialize_database(db_path: Optional[str] = None, seed: bool = True) -> Non
                 asset_id TEXT PRIMARY KEY,
                 authorized_exit INTEGER NOT NULL CHECK (authorized_exit IN (0, 1)),
                 valid_until TEXT,
+                requested_by TEXT,
+                approved_by TEXT,
+                revoked_at TEXT,
+                revocation_reason TEXT,
                 notes TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (asset_id) REFERENCES assets(asset_id) ON DELETE CASCADE
             );
         """)
+
+        # Inline migration: add new columns if they don't exist (for existing databases)
+        _new_cols = [
+            ("requested_by", "TEXT"),
+            ("approved_by", "TEXT"),
+            ("revoked_at", "TEXT"),
+            ("revocation_reason", "TEXT"),
+        ]
+        existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(authorization)").fetchall()}
+        for col_name, col_type in _new_cols:
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE authorization ADD COLUMN {col_name} {col_type};")
+                logger.info(f"Migration: added column 'authorization.{col_name}'")
 
         # 3.4 Tracking Events Table
         cursor.execute("""
@@ -383,16 +400,20 @@ def update_asset(
 def check_exit_authorization(asset_id: str, db_path: Optional[str] = None) -> bool:
     """
     Check whether an asset is authorized to exit through the main gate.
-    - If asset is unknown or uncataloged: returns False.
-    - If asset exists but has no authorization record: returns False.
-    - Returns True ONLY when an explicit authorized_exit = 1 record exists.
+    Rules (in order):
+    - If no record exists: returns False.
+    - If authorized_exit = 0: returns False.
+    - If revoked_at is not NULL: returns False (revoked).
+    - If valid_until is not NULL and is in the past: returns False (expired).
+    - Otherwise: returns True.
     """
     target_db = db_path or DATABASE_PATH
+    now = get_utc_now()
 
     with get_connection(target_db) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT authorized_exit
+            SELECT authorized_exit, valid_until, revoked_at
             FROM authorization
             WHERE asset_id = ?;
         """, (asset_id,))
@@ -401,7 +422,25 @@ def check_exit_authorization(asset_id: str, db_path: Optional[str] = None) -> bo
         if row is None:
             return False
 
-        return bool(row["authorized_exit"])
+        if not bool(row["authorized_exit"]):
+            return False
+
+        # Check revocation
+        if row["revoked_at"] is not None:
+            return False
+
+        # Check temporal validity
+        if row["valid_until"] is not None:
+            try:
+                expiry = row["valid_until"].replace("Z", "+00:00")
+                now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
+                exp_dt = datetime.fromisoformat(expiry)
+                if now_dt > exp_dt:
+                    return False
+            except (ValueError, TypeError):
+                pass  # Malformed valid_until treated as no expiry
+
+        return True
 
 
 def set_exit_authorization(
@@ -409,10 +448,17 @@ def set_exit_authorization(
     authorized_exit: int,
     notes: Optional[str] = None,
     valid_until: Optional[str] = None,
+    requested_by: Optional[str] = None,
+    approved_by: Optional[str] = None,
+    revoked_at: Optional[str] = None,
+    revocation_reason: Optional[str] = None,
     db_path: Optional[str] = None
 ) -> bool:
     """
-    Explicitly set or update exit authorization for an asset.
+    Set or update exit authorization for an asset.
+    All fields are optional except asset_id and authorized_exit.
+    Setting revoked_at to a non-None value revokes the authorization.
+    Setting authorized_exit=0 is also considered a revocation.
     """
     target_db = db_path or DATABASE_PATH
     now = get_utc_now()
@@ -427,16 +473,77 @@ def set_exit_authorization(
             return False
 
         cursor.execute("""
-            INSERT INTO authorization (asset_id, authorized_exit, notes, valid_until, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO authorization (asset_id, authorized_exit, notes, valid_until,
+                                       requested_by, approved_by, revoked_at, revocation_reason, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(asset_id) DO UPDATE SET
                 authorized_exit = excluded.authorized_exit,
-                notes = COALESCE(excluded.notes, authorization.notes),
-                valid_until = COALESCE(excluded.valid_until, authorization.valid_until),
+                notes = CASE WHEN excluded.notes IS NOT NULL THEN excluded.notes ELSE authorization.notes END,
+                valid_until = excluded.valid_until,
+                requested_by = CASE WHEN excluded.requested_by IS NOT NULL THEN excluded.requested_by ELSE authorization.requested_by END,
+                approved_by = CASE WHEN excluded.approved_by IS NOT NULL THEN excluded.approved_by ELSE authorization.approved_by END,
+                revoked_at = excluded.revoked_at,
+                revocation_reason = CASE WHEN excluded.revocation_reason IS NOT NULL THEN excluded.revocation_reason ELSE authorization.revocation_reason END,
                 updated_at = excluded.updated_at;
-        """, (asset_id, auth_val, notes, valid_until, now))
+        """, (asset_id, auth_val, notes, valid_until, requested_by, approved_by, revoked_at, revocation_reason, now))
 
         return True
+
+
+def get_authorization(asset_id: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Retrieve the full authorization record for an asset."""
+    target_db = db_path or DATABASE_PATH
+    with get_connection(target_db) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM authorization WHERE asset_id = ?;", (asset_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_all_authorizations(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve all authorization records ordered by asset_id."""
+    target_db = db_path or DATABASE_PATH
+    with get_connection(target_db) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT auth.*, a.asset_name, a.expected_zone
+            FROM authorization auth
+            JOIN assets a ON auth.asset_id = a.asset_id
+            ORDER BY auth.asset_id;
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_exit_authorization_reason(asset_id: str, db_path: Optional[str] = None) -> str:
+    """Return a human-readable reason why an asset is not authorized to exit."""
+    target_db = db_path or DATABASE_PATH
+    now = get_utc_now()
+
+    with get_connection(target_db) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT authorized_exit, valid_until, revoked_at, revocation_reason
+            FROM authorization WHERE asset_id = ?;
+        """, (asset_id,))
+        row = cursor.fetchone()
+
+    if row is None:
+        return "no authorization record on file"
+    if not bool(row["authorized_exit"]):
+        return "authorization is explicitly denied"
+    if row["revoked_at"] is not None:
+        reason = row["revocation_reason"] or "no reason recorded"
+        return f"authorization was revoked at {row['revoked_at']} ({reason})"
+    if row["valid_until"] is not None:
+        try:
+            expiry = row["valid_until"].replace("Z", "+00:00")
+            now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            exp_dt = datetime.fromisoformat(expiry)
+            if now_dt > exp_dt:
+                return f"authorization expired at {row['valid_until']}"
+        except (ValueError, TypeError):
+            pass
+    return "authorization denied"
 
 
 # ==========================================

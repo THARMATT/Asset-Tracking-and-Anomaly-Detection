@@ -1,6 +1,13 @@
-﻿.venv/
+.venv/
+backend/venv/
+venv/
 __pycache__/
 *.py[cod]
 .env
 .vscode/
 .idea/
+wokwi/secrets.h
+backend/backend/
+*.backup_*
+*.db.backup_*
+
