@@ -38,6 +38,14 @@ from anomaly_engine import (
     run_and_save_inventory_audit
 )
 from mqtt_service import MQTTSubscriber
+from location_service import (
+    insert_location,
+    get_latest_locations,
+    get_asset_location_history,
+    get_telemetry_history,
+    VALID_SOURCES,
+)
+import iot_simulator.engine as iot_engine
 
 # Configure readable logging
 logging.basicConfig(
@@ -90,6 +98,19 @@ def create_app(test_config=None) -> Flask:
             mqtt_sub = None
 
     app.extensions["mqtt_subscriber"] = mqtt_sub
+
+    # Auto-start the IoT simulator (unless we are in test mode)
+    if test_config is None:
+        try:
+            is_reloader_worker = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+            # Only start in the reloader child process (or when not in debug mode)
+            # to avoid launching two threads when Flask reloads.
+            if not app.debug or is_reloader_worker:
+                interval = float(os.environ.get("IOT_SIMULATOR_INTERVAL", "5"))
+                iot_engine.start(db_path=target_db, interval_s=interval)
+                logger.info("IoT simulator auto-started (interval=%.0fs).", interval)
+        except Exception as exc:
+            logger.error("Failed to auto-start IoT simulator: %s", exc)
 
     def get_db():
         """Retrieve the configured database path safely for current request context."""
@@ -469,7 +490,220 @@ def create_app(test_config=None) -> Flask:
         }), 200
 
     # ==========================================
-    # 7. ERROR HANDLERS (SAFE, NO LEAKED TRACES)
+    # 7. SPATIAL LOCATION ENDPOINTS
+    # ==========================================
+    # DESIGN CONSTRAINT: These endpoints manage GPS/spatial coordinates only.
+    # Location data NEVER influences anomaly status, gate authorization, or exit
+    # permissions. Those are controlled exclusively by RFID scan events and the
+    # authorization table. Coordinates from 'simulator'/'manual' sources are
+    # explicitly labeled as approximate and must not be mistaken for real sensor data.
+
+    @app.route("/api/locations/latest", methods=["GET"])
+    def list_latest_locations():
+        """
+        Return the most recent location record for every asset that has one.
+        Includes asset metadata and source label so the UI can display
+        SIMULATED vs DEVICE badges.
+        """
+        try:
+            locations = get_latest_locations(db_path=get_db())
+            return jsonify({
+                "success": True,
+                "count": len(locations),
+                "data": locations,
+                "notice": "Coordinates labeled 'simulator' or 'manual' are approximate and not real GPS fixes."
+            }), 200
+        except Exception as exc:
+            logger.error(f"Failed to fetch latest locations: {exc}")
+            return jsonify({"success": False, "error": "Failed to retrieve latest locations"}), 500
+
+    @app.route("/api/assets/<asset_id>/locations", methods=["GET"])
+    def get_location_history(asset_id: str):
+        """
+        Return the N most recent location records for a single asset.
+        Query params:
+        - limit: int (default 100, max 500)
+        """
+        clean_id = str(asset_id).strip()
+        # Verify asset exists first
+        asset = get_asset(clean_id, db_path=get_db())
+        if asset is None:
+            return jsonify({"success": False, "error": f"Asset '{clean_id}' not found"}), 404
+
+        try:
+            limit = request.args.get("limit", 100, type=int)
+        except (ValueError, TypeError):
+            return jsonify({"success": False, "error": "Invalid 'limit' parameter"}), 400
+
+        try:
+            history = get_asset_location_history(clean_id, limit=limit, db_path=get_db())
+            return jsonify({
+                "success": True,
+                "asset_id": clean_id,
+                "count": len(history),
+                "data": history
+            }), 200
+        except Exception as exc:
+            logger.error(f"Failed to fetch location history for asset '{clean_id}': {exc}")
+            return jsonify({"success": False, "error": "Failed to retrieve location history"}), 500
+
+    @app.route("/api/locations", methods=["POST"])
+    def record_location():
+        """
+        Record a new asset location.
+        Required fields: asset_id, latitude, longitude
+        Optional fields: source (default 'simulator'), accuracy_m, message_id,
+                         temperature, battery_level, speed, recorded_at
+
+        Latitude:  -90  to  90
+        Longitude: -180 to 180
+        Source:    one of 'device', 'simulator', 'manual'
+
+        IMPORTANT: Submitting a location NEVER modifies gate authorization or
+        anomaly classification. Those are exclusively controlled by RFID events.
+        """
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"success": False, "error": "Request body must be a valid JSON object"}), 400
+
+        # Required fields
+        missing = [f for f in ("asset_id", "latitude", "longitude") if f not in payload]
+        if missing:
+            return jsonify({
+                "success": False,
+                "error": f"Missing required fields: {', '.join(missing)}"
+            }), 400
+
+        try:
+            result = insert_location(
+                asset_id=str(payload["asset_id"]).strip(),
+                latitude=payload["latitude"],
+                longitude=payload["longitude"],
+                source=payload.get("source", "simulator"),
+                accuracy_m=payload.get("accuracy_m"),
+                message_id=payload.get("message_id"),
+                temperature=payload.get("temperature"),
+                battery_level=payload.get("battery_level"),
+                speed=payload.get("speed"),
+                recorded_at=payload.get("recorded_at"),
+                db_path=get_db()
+            )
+        except LookupError as e:
+            return jsonify({"success": False, "error": str(e)}), 404
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+        except Exception as exc:
+            logger.error(f"Failed to record location: {exc}")
+            return jsonify({"success": False, "error": "Failed to record location"}), 500
+
+        if result.get("duplicate"):
+            return jsonify({
+                "success": True,
+                "duplicate": True,
+                "message": result["message"],
+                "data": result
+            }), 200
+
+        return jsonify({
+            "success": True,
+            "duplicate": False,
+            "message": result["message"],
+            "data": result
+        }), 201
+
+    @app.route("/api/telemetry/history", methods=["GET"])
+    def list_telemetry_history():
+        """
+        Return location rows containing at least one non-null telemetry field
+        (temperature, battery_level, speed).
+        Query params:
+        - asset_id: str (optional filter)
+        - limit: int (default 50, max 500)
+        """
+        try:
+            limit = request.args.get("limit", 50, type=int)
+        except (ValueError, TypeError):
+            return jsonify({"success": False, "error": "Invalid 'limit' parameter"}), 400
+
+        asset_id = request.args.get("asset_id")
+        try:
+            rows = get_telemetry_history(
+                asset_id=asset_id.strip() if asset_id else None,
+                limit=limit,
+                db_path=get_db()
+            )
+            return jsonify({
+                "success": True,
+                "count": len(rows),
+                "data": rows
+            }), 200
+        except Exception as exc:
+            logger.error(f"Failed to fetch telemetry history: {exc}")
+            return jsonify({"success": False, "error": "Failed to retrieve telemetry history"}), 500
+
+    @app.route("/api/simulator/movement", methods=["POST"])
+    def simulate_movement():
+        """
+        Simulate a batch of location updates for demo purposes.
+        Only active when LOCATION_SIMULATOR_ENABLED=True environment variable is set.
+        Each call records one new simulated location per asset_id provided.
+
+        Returns 403 if the simulator feature is not enabled.
+
+        REMINDER: Simulated locations are labeled source='simulator' and are
+        explicitly approximate. They do not affect RFID/gate/anomaly logic.
+        """
+        enabled = os.environ.get("LOCATION_SIMULATOR_ENABLED", "false").lower() in ("true", "1", "yes")
+        if not enabled:
+            return jsonify({
+                "success": False,
+                "error": "Location simulator is disabled. Set LOCATION_SIMULATOR_ENABLED=True to enable.",
+                "enabled": False
+            }), 403
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"success": False, "error": "Request body must be a valid JSON object"}), 400
+
+        # Required
+        missing = [f for f in ("asset_id", "latitude", "longitude") if f not in payload]
+        if missing:
+            return jsonify({
+                "success": False,
+                "error": f"Missing required fields: {', '.join(missing)}"
+            }), 400
+
+        try:
+            result = insert_location(
+                asset_id=str(payload["asset_id"]).strip(),
+                latitude=payload["latitude"],
+                longitude=payload["longitude"],
+                source="simulator",
+                accuracy_m=payload.get("accuracy_m"),
+                message_id=payload.get("message_id"),
+                temperature=payload.get("temperature"),
+                battery_level=payload.get("battery_level"),
+                speed=payload.get("speed"),
+                recorded_at=payload.get("recorded_at"),
+                db_path=get_db()
+            )
+        except LookupError as e:
+            return jsonify({"success": False, "error": str(e)}), 404
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+        except Exception as exc:
+            logger.error(f"Simulator movement failed: {exc}")
+            return jsonify({"success": False, "error": "Failed to simulate movement"}), 500
+
+        return jsonify({
+            "success": True,
+            "simulated": True,
+            "notice": "This is a simulated location (source=simulator). Not a real GPS fix.",
+            "data": result
+        }), 201
+
+    # ==========================================
+    # 8. ERROR HANDLERS (SAFE, NO LEAKED TRACES)
     # ==========================================
     @app.errorhandler(400)
     def handle_bad_request(e):
@@ -487,6 +721,65 @@ def create_app(test_config=None) -> Flask:
             "success": False,
             "error": "An internal server error occurred. Please contact system administrator."
         }), 500
+
+    # ==========================================
+    # 8. IoT SIMULATOR ROUTES
+    # ==========================================
+
+    @app.route("/api/iot/status", methods=["GET"])
+    def iot_status():
+        """Return current IoT simulator engine status."""
+        return jsonify({"success": True, "data": iot_engine.get_status()}), 200
+
+    @app.route("/api/iot/start", methods=["POST"])
+    def iot_start():
+        """Start the IoT simulator background engine."""
+        interval = float(request.json.get("interval_s", 5.0)) if request.is_json else 5.0
+        interval = max(2.0, min(interval, 60.0))
+        try:
+            iot_engine.start(db_path=target_db, interval_s=interval)
+            return jsonify({"success": True, "message": "IoT simulator started.",
+                            "data": iot_engine.get_status()}), 200
+        except Exception as exc:
+            logger.error("Failed to start IoT simulator: %s", exc)
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    @app.route("/api/iot/stop", methods=["POST"])
+    def iot_stop():
+        """Stop the IoT simulator background engine."""
+        iot_engine.stop()
+        return jsonify({"success": True, "message": "IoT simulator stopped.",
+                        "data": iot_engine.get_status()}), 200
+
+    @app.route("/api/iot/pause", methods=["POST"])
+    def iot_pause():
+        """Pause the IoT simulator (keep thread alive but stop ticking)."""
+        iot_engine.pause()
+        return jsonify({"success": True, "message": "IoT simulator paused.",
+                        "data": iot_engine.get_status()}), 200
+
+    @app.route("/api/iot/resume", methods=["POST"])
+    def iot_resume():
+        """Resume a paused IoT simulator."""
+        iot_engine.resume()
+        return jsonify({"success": True, "message": "IoT simulator resumed.",
+                        "data": iot_engine.get_status()}), 200
+
+    @app.route("/api/iot/tick", methods=["POST"])
+    def iot_tick():
+        """Manually trigger one simulation cycle."""
+        demo = (request.json or {}).get("demo_anomaly", False) if request.is_json else False
+        try:
+            status = iot_engine.trigger_tick(force_demo_anomaly=bool(demo))
+            return jsonify({"success": True, "message": "Tick complete.", "data": status}), 200
+        except RuntimeError as exc:
+            return jsonify({"success": False,
+                            "error": str(exc) + " Start the simulator first."}), 400
+
+    @app.route("/api/iot/readings", methods=["GET"])
+    def iot_readings():
+        """Return latest in-memory reading for every IoT asset."""
+        return jsonify({"success": True, "data": iot_engine.get_latest_readings()}), 200
 
     return app
 

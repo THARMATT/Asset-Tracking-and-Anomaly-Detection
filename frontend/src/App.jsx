@@ -11,6 +11,7 @@ import AnalyticsCharts from './components/AnalyticsCharts';
 import AssetInventoryTable from './components/AssetInventoryTable';
 import RecentEventsTable from './components/RecentEventsTable';
 import AuditHistorySection from './components/AuditHistorySection';
+import AssetMap from './components/AssetMap';
 
 import {
   fetchHealth,
@@ -31,10 +32,11 @@ import {
   History,
   ClipboardCheck,
   Activity,
+  Map,
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'assets' | 'events' | 'audits' | 'simulator'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'assets' | 'events' | 'audits' | 'simulator' | 'map'
 
   // Data States
   const [health, setHealth] = useState(null);
@@ -239,6 +241,16 @@ export default function App() {
             <span className="tab-badge">{auditsData.total_count}</span>
           )}
         </button>
+
+        <button
+          onClick={() => setActiveTab('map')}
+          className={`tab-btn ${activeTab === 'map' ? 'active' : ''}`}
+          aria-selected={activeTab === 'map'}
+          role="tab"
+        >
+          <Map className="icon-sm mr-2" aria-hidden="true" />
+          Asset Map
+        </button>
       </nav>
 
       {/* 4. Tab Content */}
@@ -309,6 +321,13 @@ export default function App() {
               postTrackingEvent={postTrackingEvent}
               refreshDashboard={() => loadDashboardData(false)}
             />
+          </div>
+        )}
+
+        {/* MAP TAB */}
+        {activeTab === 'map' && (
+          <div className="tab-pane" style={{ minHeight: '80vh' }}>
+            <AssetMap />
           </div>
         )}
       </main>

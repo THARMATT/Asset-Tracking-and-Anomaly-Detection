@@ -98,4 +98,79 @@ export const updateAuthorization = async (assetId, authorizedExit, notes = '') =
   return response.data;
 };
 
+// ==========================================
+// SPATIAL LOCATION ENDPOINTS
+// ==========================================
+// IMPORTANT: Location data is independent of RFID/gate authorization logic.
+// Submitting a location NEVER changes anomaly status or gate permissions.
+
+export const fetchLatestLocations = async () => {
+  const response = await apiClient.get('/locations/latest');
+  return response.data.data;
+};
+
+export const fetchAssetLocationHistory = async (assetId, limit = 100) => {
+  const response = await apiClient.get(
+    `/assets/${encodeURIComponent(assetId)}/locations`,
+    { params: { limit } }
+  );
+  return response.data.data;
+};
+
+export const postLocation = async (payload) => {
+  const response = await apiClient.post('/locations', payload);
+  return response.data;
+};
+
+export const fetchTelemetryHistory = async (assetId = null, limit = 50) => {
+  const params = { limit };
+  if (assetId) params.asset_id = assetId;
+  const response = await apiClient.get('/telemetry/history', { params });
+  return response.data.data;
+};
+
+export const postSimulatorMovement = async (payload) => {
+  const response = await apiClient.post('/simulator/movement', payload);
+  return response.data;
+};
+
+// ==========================================
+// IoT SIMULATOR ENGINE ENDPOINTS
+// ==========================================
+
+export const fetchIotStatus = async () => {
+  const response = await apiClient.get('/iot/status');
+  return response.data.data;
+};
+
+export const startIotSimulator = async (interval_s = 5) => {
+  const response = await apiClient.post('/iot/start', { interval_s });
+  return response.data;
+};
+
+export const stopIotSimulator = async () => {
+  const response = await apiClient.post('/iot/stop');
+  return response.data;
+};
+
+export const pauseIotSimulator = async () => {
+  const response = await apiClient.post('/iot/pause');
+  return response.data;
+};
+
+export const resumeIotSimulator = async () => {
+  const response = await apiClient.post('/iot/resume');
+  return response.data;
+};
+
+export const triggerIotTick = async (demo_anomaly = false) => {
+  const response = await apiClient.post('/iot/tick', { demo_anomaly });
+  return response.data;
+};
+
+export const fetchIotReadings = async () => {
+  const response = await apiClient.get('/iot/readings');
+  return response.data.data;
+};
+
 export default apiClient;

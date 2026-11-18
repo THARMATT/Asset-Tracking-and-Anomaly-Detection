@@ -169,7 +169,12 @@ def initialize_database(db_path: Optional[str] = None, seed: bool = True) -> Non
             );
         """)
 
-        # 3.6 Create Performance Indexes
+        # 3.6 Asset Locations Table (spatial tracking - independent of RFID/gate logic)
+        # Import inline to avoid circular imports at module level
+        from location_service import migrate_location_table
+        migrate_location_table(cursor)
+
+        # 3.7 Create Performance Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_assets_expected_zone ON assets(expected_zone);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_assets_active ON assets(active);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_asset_id ON events(asset_id);")
