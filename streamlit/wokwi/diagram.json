@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "author": "IoT Asset Tracking Project",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "battery",
+      "top": 150,
+      "left": 250,
+      "attrs": {
+        "value": "85"
+      }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "geofence",
+      "top": 290,
+      "left": 250,
+      "attrs": {
+        "value": "0"
+      }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led",
+      "top": 150,
+      "left": -160,
+      "attrs": {
+        "color": "red"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 190,
+      "left": -100,
+      "attrs": {
+        "value": "220"
+      }
+    }
+  ],
+  "connections": [
+    [
+      "esp:3V3",
+      "battery:VCC",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:GND.1",
+      "battery:GND",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:34",
+      "battery:SIG",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:3V3",
+      "geofence:VCC",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:GND.2",
+      "geofence:GND",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:35",
+      "geofence:SIG",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:2",
+      "r1:1",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "r1:2",
+      "led:A",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led:C",
+      "esp:GND.2",
+      "black",
+      [
+        "v0"
+      ]
+    ]
+  ],
+  "dependencies": {}
+}
